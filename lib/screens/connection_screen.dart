@@ -1,3 +1,4 @@
+import 'package:controller/orientation_lock.dart';
 import 'package:controller/screens/bluetooth_scan_screen.dart';
 import 'package:controller/services/connection_manager.dart';
 import 'package:controller/services/wifi_scanner.dart';
@@ -54,6 +55,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     String? password;
     if (network.secured) {
       password = await _askPassword(network.ssid);
+      await lockLandscape();
       if (password == null || !mounted) return;
     }
     setState(() => _joining = network.ssid);
@@ -73,6 +75,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       if (!mounted) return;
       _toast('Wi-Fi connect failed: $error');
     } finally {
+      await lockLandscape();
       if (mounted) setState(() => _joining = null);
     }
   }
@@ -81,29 +84,59 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     final controller = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(ssid),
-          content: TextField(
-            controller: controller,
-            obscureText: true,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Wi-Fi password'),
-            onSubmitted: (value) => Navigator.of(context).pop(value),
+      builder: (dialogContext) {
+        return Dialog(
+          alignment: Alignment.topCenter,
+          insetPadding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+          backgroundColor: const Color(0xFF12243F),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(ssid, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  obscureText: true,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(labelText: 'Wi-Fi password'),
+                  onTap: () {
+                    lockLandscape();
+                  },
+                  onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF3DDC97),
+                        foregroundColor: const Color(0xFF071422),
+                      ),
+                      onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+                      child: const Text('Join'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
-              child: const Text('Join'),
-            ),
-          ],
         );
       },
-    ).whenComplete(controller.dispose);
+    ).whenComplete(() {
+      controller.dispose();
+      return lockLandscape();
+    });
   }
 
   void _toast(String message) {

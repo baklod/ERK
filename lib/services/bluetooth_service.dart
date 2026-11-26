@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:controller/models/boat_command.dart';
+import 'package:controller/orientation_lock.dart';
 import 'package:controller/services/boat_connection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as ble;
@@ -76,6 +77,7 @@ class BluetoothService implements BoatConnection {
           Permission.bluetoothConnect,
           Permission.locationWhenInUse,
         ].request();
+        await lockLandscape();
         final scan = statuses[Permission.bluetoothScan];
         final connect = statuses[Permission.bluetoothConnect];
         if (scan != null && connect != null) {
@@ -109,6 +111,7 @@ class BluetoothService implements BoatConnection {
     if (adapter != ble.BluetoothAdapterState.on) {
       if (defaultTargetPlatform == TargetPlatform.android) {
         await ble.FlutterBluePlus.turnOn();
+        await lockLandscape();
       } else {
         throw StateError('Turn Bluetooth on and try again');
       }

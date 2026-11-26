@@ -1,13 +1,11 @@
+import 'package:controller/orientation_lock.dart';
 import 'package:controller/screens/boat_controller_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setPreferredOrientations(const [
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
+  await lockLandscape();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
@@ -15,8 +13,31 @@ Future<void> main() async {
   runApp(const BoatApp());
 }
 
-class BoatApp extends StatelessWidget {
+class BoatApp extends StatefulWidget {
   const BoatApp({super.key});
+
+  @override
+  State<BoatApp> createState() => _BoatAppState();
+}
+
+class _BoatAppState extends State<BoatApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    lockLandscape();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) lockLandscape();
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -1,13 +1,17 @@
 package com.example.controller
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -17,6 +21,81 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val relock = Runnable { lockLandscape() }
+    private var focused = true
+    private var correcting = false
+    private var lastToggle = 0L
+    private var forceAttempts = 0
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        lockLandscape()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lastToggle = 0
+        forceAttempts = 0
+        lockLandscape()
+    }
+
+    override fun onPause() {
+        // Permission, Wi-Fi, and keyboard windows on this phone request portrait.
+        // Commit landscape again before they take the screen.
+        super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        focused = hasFocus
+        if (hasFocus) {
+            lastToggle = 0
+            forceAttempts = 0
+            lockLandscape()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (newConfig.orientation != Configuration.ORIENTATION_LANDSCAPE) {
+            lockLandscape()
+        }
+    }
+
+    override fun setRequestedOrientation(requestedOrientation: Int) {
+        super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+    }
+
+    private fun lockLandscape() {
+        if (correcting) return
+        val landscapeNow = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val alreadyLocked = requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        if (landscapeNow && alreadyLocked) {
+            forceAttempts = 0
+            mainHandler.removeCallbacks(relock)
+            return
+        }
+        // A system dialog is in front and landscape is already requested. Wait
+        // until this window is focused again, then force the rotation back.
+        if (!focused && !landscapeNow && alreadyLocked) return
+        if (forceAttempts >= 4) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastToggle < 250) {
+            mainHandler.removeCallbacks(relock)
+            mainHandler.postDelayed(relock, 260)
+            return
+        }
+        lastToggle = now
+        forceAttempts += 1
+        correcting = true
+        try {
+            super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
+            super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+        } finally {
+            correcting = false
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -32,6 +111,18 @@ class MainActivity : FlutterActivity() {
                         } else {
                             connectToBoat(ssid, password, result)
                         }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "erk.eco.wave/orientation")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "lock" -> {
+                        lastToggle = 0
+                        forceAttempts = 0
+                        lockLandscape()
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }
@@ -91,6 +182,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(relock)
         connectivityManager?.bindProcessToNetwork(null)
         releaseNetwork()
         super.onDestroy()

@@ -1,3 +1,4 @@
+import 'package:controller/orientation_lock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -32,6 +33,7 @@ class WifiScanner {
         Permission.nearbyWifiDevices,
       ].request();
     } catch (_) {}
+    await lockLandscape();
 
     final canScan = await WiFiScan.instance.canStartScan();
     if (canScan != CanStartScan.yes) {
