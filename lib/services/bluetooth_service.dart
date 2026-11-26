@@ -7,7 +7,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as ble;
 import 'package:permission_handler/permission_handler.dart';
 
-/// Nordic UART Service (common on ESP32 BLE bridges).
+/// ERK ESP32 NimBLE service. Control is write-only; status is read/notify.
+final _boatService = ble.Guid('12345678-1234-1234-1234-123456789001');
+final _boatControl = ble.Guid('12345678-1234-1234-1234-123456789002');
+final _boatStatus = ble.Guid('12345678-1234-1234-1234-123456789003');
+
+/// Older Nordic UART bridge, used only if the boat service is absent.
 final _nusService = ble.Guid('6E400001-B5A3-F393-E0A9-E50E24DCCA9E');
 final _nusRx = ble.Guid('6E400002-B5A3-F393-E0A9-E50E24DCCA9E');
 final _nusTx = ble.Guid('6E400003-B5A3-F393-E0A9-E50E24DCCA9E');
@@ -130,7 +135,11 @@ class BluetoothService implements BoatConnection {
               ),
             )
             .toList()
-          ..sort((a, b) => b.rssi.compareTo(a.rssi));
+          ..sort((a, b) {
+            final rank = _boatRank(a).compareTo(_boatRank(b));
+            if (rank != 0) return rank;
+            return b.rssi.compareTo(a.rssi);
+          });
         if (!_scanController.isClosed) {
           _scanController.add(devices);
         }
@@ -182,6 +191,9 @@ class BluetoothService implements BoatConnection {
         license: ble.License.nonprofit,
         timeout: const Duration(seconds: 20),
       );
+      try {
+        await device.requestMtu(185);
+      } catch (_) {}
       final services = await device.discoverServices();
       _writeChar = _pickWriteCharacteristic(services);
       if (_writeChar == null) {
@@ -195,6 +207,10 @@ class BluetoothService implements BoatConnection {
         });
         device.cancelWhenDisconnected(sub);
         await notify.setNotifyValue(true);
+        try {
+          final current = await notify.read();
+          _inboundController.add(String.fromCharCodes(current));
+        } catch (_) {}
       }
 
       _setStatus(LinkStatus.connected);
@@ -228,52 +244,56 @@ class BluetoothService implements BoatConnection {
     if (characteristic == null || _status != LinkStatus.connected) {
       throw StateError('Bluetooth is not connected');
     }
-    final withoutResponse = characteristic.properties.writeWithoutResponse;
-    await characteristic.write(
-      command.toBytes(),
-      withoutResponse: withoutResponse,
-    );
+    final bytes = command.toBytes();
+    final withoutResponse = characteristic.properties.writeWithoutResponse && bytes.length <= 20;
+    try {
+      await characteristic.write(bytes, withoutResponse: withoutResponse);
+    } catch (_) {
+      if (!withoutResponse || !characteristic.properties.write) rethrow;
+      await characteristic.write(bytes, withoutResponse: false);
+    }
   }
 
   ble.BluetoothCharacteristic? _pickWriteCharacteristic(
     List<ble.BluetoothService> services,
   ) {
     ble.BluetoothCharacteristic? fallback;
+    ble.BluetoothCharacteristic? nus;
     for (final service in services) {
       for (final characteristic in service.characteristics) {
-        if (characteristic.characteristicUuid == _nusRx ||
-            (service.uuid == _nusService &&
-                (characteristic.properties.writeWithoutResponse ||
-                    characteristic.properties.write))) {
-          return characteristic;
-        }
-        final props = characteristic.properties;
-        if (fallback == null && (props.writeWithoutResponse || props.write)) {
-          fallback = characteristic;
-        }
+        final uuid = characteristic.characteristicUuid;
+        if (uuid == _boatControl) return characteristic;
+        final canWrite = characteristic.properties.writeWithoutResponse || characteristic.properties.write;
+        if (!canWrite) continue;
+        if (uuid == _nusRx || service.uuid == _nusService) nus ??= characteristic;
+        fallback ??= characteristic;
       }
     }
-    return fallback;
+    return nus ?? fallback;
   }
 
   ble.BluetoothCharacteristic? _pickNotifyCharacteristic(
     List<ble.BluetoothService> services,
   ) {
+    ble.BluetoothCharacteristic? fallback;
+    ble.BluetoothCharacteristic? nus;
     for (final service in services) {
       for (final characteristic in service.characteristics) {
-        if (characteristic.characteristicUuid == _nusTx) {
-          return characteristic;
-        }
+        final uuid = characteristic.characteristicUuid;
+        if (uuid == _boatStatus) return characteristic;
+        final canNotify = characteristic.properties.notify || characteristic.properties.indicate;
+        if (!canNotify) continue;
+        if (uuid == _nusTx) nus ??= characteristic;
+        fallback ??= characteristic;
       }
     }
-    for (final service in services) {
-      for (final characteristic in service.characteristics) {
-        if (characteristic.properties.notify || characteristic.properties.indicate) {
-          return characteristic;
-        }
-      }
-    }
-    return null;
+    return nus ?? fallback;
+  }
+
+  int _boatRank(BoatScanDevice device) {
+    final name = device.name.toLowerCase();
+    if (name.contains('boat') || name.contains('erk')) return 0;
+    return 1;
   }
 
   String _deviceName(ble.ScanResult result) {

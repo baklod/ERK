@@ -27,6 +27,8 @@ class ConnectionManager extends ChangeNotifier {
   StreamSubscription<LinkStatus>? _wifiSub;
   StreamSubscription<LinkStatus>? _btSub;
   StreamSubscription<LinkStatus>? _activeSub;
+  StreamSubscription<String>? _inboundSub;
+  DateTime? _ignoreBoatStopUntil;
 
   BoatConnection? get active => _active;
 
@@ -84,7 +86,9 @@ class ConnectionManager extends ChangeNotifier {
     final current = _active;
     _active = null;
     await _activeSub?.cancel();
+    await _inboundSub?.cancel();
     _activeSub = null;
+    _inboundSub = null;
     if (current != null) {
       try {
         await current.disconnect();
@@ -117,9 +121,10 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   void resetEmergencyStop() {
+    _ignoreBoatStopUntil = DateTime.now().add(const Duration(milliseconds: 500));
     _command = BoatCommand.idle;
     notifyListeners();
-    unawaited(_sendNow());
+    unawaited(_sendPacket(BoatCommand.release));
   }
 
   void _onStatus(LinkStatus status) {
@@ -130,25 +135,40 @@ class ConnectionManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _onBoatMessage(String message) {
+    if (!message.contains('emergency_stop')) return;
+    final ignoreUntil = _ignoreBoatStopUntil;
+    if (ignoreUntil != null && DateTime.now().isBefore(ignoreUntil)) return;
+    if (_command.emergencyStop) return;
+    _command = BoatCommand.stopped;
+    notifyListeners();
+  }
+
   void _listenActive() {
     _activeSub?.cancel();
-    _activeSub = _active?.statusStream.listen(_onStatus);
+    _inboundSub?.cancel();
+    final active = _active;
+    _activeSub = active?.statusStream.listen(_onStatus);
+    _inboundSub = active?.inbound.listen(_onBoatMessage);
   }
 
   void _startHeartbeat() {
     _heartbeat?.cancel();
+    unawaited(_sendPacket(BoatCommand.statusQuery));
     _heartbeat = Timer.periodic(const Duration(milliseconds: 100), (_) {
       unawaited(_sendNow());
     });
   }
 
-  Future<void> _sendNow() async {
+  Future<void> _sendNow() => _sendPacket(_command);
+
+  Future<void> _sendPacket(BoatCommand command) async {
     final connection = _active;
     if (connection == null || connection.status != LinkStatus.connected) {
       return;
     }
     try {
-      await connection.sendCommand(_command);
+      await connection.sendCommand(command);
     } catch (_) {}
   }
 
@@ -158,6 +178,7 @@ class ConnectionManager extends ChangeNotifier {
     _wifiSub?.cancel();
     _btSub?.cancel();
     _activeSub?.cancel();
+    _inboundSub?.cancel();
     super.dispose();
   }
 }
